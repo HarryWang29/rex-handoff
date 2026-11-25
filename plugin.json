@@ -1,0 +1,18 @@
+{
+  "name": "rex-handoff",
+  "displayName": "Rex Handoff",
+  "version": "0.1.0",
+  "description": "Single-model planning in agy with adaptive Rex pane splitting, semi-auto handoff to omp, post-run review, and automatic Rex session/tab title sync on macOS.",
+  "author": {
+    "name": "HarryWang29",
+    "url": "https://github.com/HarryWang29"
+  },
+  "homepage": "https://github.com/HarryWang29/rex-handoff",
+  "repository": "https://github.com/HarryWang29/rex-handoff",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Analyze this task and use /rex-handoff to hand implementation over to omp.",
+    "Review the omp changes against the handoff and git diff.",
+    "Run rex-handoff --doctor to check my local environment."
+  ]
+}

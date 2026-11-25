@@ -1,0 +1,25 @@
+{
+  "rex-handoff-bridge": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 ./skills/rex-handoff/scripts/rex_auto_title.py agy-session-start",
+        "timeout": 5
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 ./skills/rex-handoff/scripts/rex_auto_title.py agy-pre-invocation",
+        "timeout": 3
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ./skills/rex-handoff/scripts/rex_auto_title.py agy-stop",
+        "timeout": 3
+      }
+    ]
+  }
+}
