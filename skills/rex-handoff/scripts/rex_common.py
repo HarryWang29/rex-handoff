@@ -134,17 +134,32 @@ def locate_window_for_block(session_info: dict, block_id: str) -> tuple[dict | N
 
 
 def inspect_session_for_block(rex_bin: str, block_id: str) -> dict | None:
-    commands = [["session", "inspect", "-s", block_id], ["session", "inspect"]]
-    session_id = os.environ.get("REX_SESSION")
-    if session_id:
-        commands.append(["session", "inspect", session_id])
-
-    for command in commands:
+    def inspect(session_id: str | None = None) -> dict | None:
+        command = ["session", "inspect"]
+        if session_id:
+            command.append(session_id)
         try:
             info = run_rex_json(rex_bin, command)
         except REX_ERRORS:
-            continue
+            return None
         window, _ = locate_window_for_block(info, block_id)
-        if window is not None:
+        return info if window is not None else None
+
+    info = inspect()
+    if info is not None:
+        return info
+
+    env_session_id = os.environ.get("REX_SESSION")
+    if env_session_id:
+        info = inspect(env_session_id)
+        if info is not None:
             return info
-    return None
+
+    try:
+        identity = run_rex_json(rex_bin, ["--autostart=false", "whoami"], timeout=2.0)
+    except REX_ERRORS:
+        return None
+    identity_session_id = identity.get("session_id")
+    if not identity_session_id or identity_session_id == env_session_id:
+        return None
+    return inspect(identity_session_id)

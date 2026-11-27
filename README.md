@@ -85,7 +85,8 @@ python3 ./skills/rex-handoff/scripts/rex_auto_title.py print-zsh-hook
 | 环境变量 | 用途 |
 | --- | --- |
 | `REX_BIN_DIR` | Rex 注入的 CLI 所在目录，优先于 `PATH`。未命中时依次检查当前用户的 Rex Server、App 安装目录和 Spotlight |
-| `REX_SESSION`、`REX_BLOCK` | Rex 注入的当前 Session 和面板标识 |
+| `REX_BLOCK` | Rex 注入的当前面板标识 |
+| `REX_SESSION` | 可选的当前 Session 标识。缺失时通过 Rex CLI 自动解析 |
 | `REX_HANDOFF_LANG` | 未传 `--lang` 时用 `zh` 或 `en` 指定提示语言 |
 | `REX_HANDOFF_AUTO_TITLE` | 默认开启。设为 `0`、`false` 或 `off` 关闭重命名，保留 Rex 上下文注入 |
 | `SHELL` | `PATH` 中找不到 `omp` 时，`--doctor` 从此交互式 Shell 查询 |

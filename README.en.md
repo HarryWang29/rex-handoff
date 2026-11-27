@@ -83,7 +83,8 @@ From the plugin root, run `python3 ./skills/rex-handoff/scripts/dispatch_handoff
 | Environment variable | Purpose |
 | --- | --- |
 | `REX_BIN_DIR` | Rex-provided CLI directory, checked before `PATH`. The remaining search order is the user's current Rex Server, app bundles, and Spotlight |
-| `REX_SESSION`, `REX_BLOCK` | Current session and pane IDs, provided by Rex |
+| `REX_BLOCK` | Current pane ID, provided by Rex |
+| `REX_SESSION` | Optional current session ID. If unset, Rex Handoff resolves it through the Rex CLI |
 | `REX_HANDOFF_LANG` | `zh` or `en` when `--lang` is omitted |
 | `REX_HANDOFF_AUTO_TITLE` | Enabled by default. Set to `0`, `false`, or `off` to disable renames and keep Rex context injection |
 | `SHELL` | Interactive shell queried by `--doctor` if `omp` is missing from `PATH` |

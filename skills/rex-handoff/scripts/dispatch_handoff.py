@@ -188,14 +188,20 @@ def doctor() -> dict:
     rex_bin = find_rex_bin()
     rex_session = os.environ.get("REX_SESSION") or None
     block_id = os.environ.get("REX_BLOCK")
+    identity_session = None
     inside = False
-    if rex_bin and rex_session and block_id:
+    if rex_bin and block_id:
         try:
             identity = run_rex_json(rex_bin, ["--autostart=false", "whoami"], timeout=2.0)
         except REX_ERRORS:
             pass
         else:
-            inside = identity.get("session_id") == rex_session and identity.get("block_id") == block_id
+            identity_session = identity.get("session_id") or None
+            inside = (
+                bool(identity_session)
+                and identity.get("block_id") == block_id
+                and (not rex_session or identity_session == rex_session)
+            )
     omp_available = has_omp()
     home = Path.home()
     agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR") or home / ".omp/agent").expanduser()
@@ -207,7 +213,7 @@ def doctor() -> dict:
     if not rex_bin:
         warnings.append("Rex CLI was not found. Open Rex or set REX_BIN_DIR to its bin directory.")
     if not inside:
-        warnings.append("Start agy in a live Rex pane with matching REX_SESSION and REX_BLOCK values.")
+        warnings.append("Start agy in a live Rex pane with a matching REX_BLOCK value.")
     if not omp_available:
         warnings.append("omp was not found in PATH or the interactive $SHELL.")
     if model and "orchestrator" in model.lower():
@@ -220,7 +226,7 @@ def doctor() -> dict:
         "checks": {
             "macos": macos,
             "rex_bin": rex_bin,
-            "rex_session": rex_session,
+            "rex_session": rex_session or identity_session,
             "inside_rex_session": inside,
             "omp_available": omp_available,
             "omp_config_path": str(agent_dir / "config.yml"),
@@ -250,17 +256,22 @@ def dispatch_handoff(cwd: str, prompt: str, *, direction: str = "auto", auto_ent
         raise ValueError(f"Invalid split direction {direction!r}")
     if not is_macos():
         raise DispatchError("Live dispatch requires macOS")
-    session_id = os.environ.get("REX_SESSION")
     source_id = os.environ.get("REX_BLOCK")
-    if not session_id or not source_id:
-        raise DispatchError("Run this command inside a Rex terminal (REX_SESSION and REX_BLOCK are required)")
+    if not source_id:
+        raise DispatchError("Run this command inside a Rex terminal (REX_BLOCK is required)")
+    expected_session_id = os.environ.get("REX_SESSION") or None
     rex_bin = find_rex_bin()
     if not rex_bin:
         raise DispatchError("Rex CLI was not found. Run --doctor for details.")
 
     info = inspect_session_for_block(rex_bin, source_id)
-    if not info or info.get("session_id") != session_id:
-        raise DispatchError(f"Rex could not find pane {source_id} in session {session_id}")
+    session_id = info.get("session_id") if info else None
+    if not info or not session_id:
+        raise DispatchError(f"Rex could not resolve the session containing pane {source_id}")
+    if expected_session_id and session_id != expected_session_id:
+        raise DispatchError(
+            f"REX_SESSION mismatch for Rex pane {source_id} (expected {expected_session_id}, found {session_id})"
+        )
     window, _ = locate_window_for_block(info, source_id)
     if window is None:
         raise DispatchError(f"Rex could not find the tab containing pane {source_id}")

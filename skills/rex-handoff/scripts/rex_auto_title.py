@@ -188,9 +188,9 @@ def read_agy_title(conversation_id: str, agy_dir: Path | None = None) -> str:
 
 
 def sync_agy_title_bg(conversation_id: str, cwd: str | None = None, retries: int = 0) -> None:
-    session_id = os.environ.get("REX_SESSION")
+    expected_session_id = os.environ.get("REX_SESSION") or None
     block_id = os.environ.get("REX_BLOCK")
-    if not is_macos() or not auto_title_enabled() or not session_id or not block_id:
+    if not is_macos() or not auto_title_enabled() or not block_id:
         return
     rex_bin = find_rex_bin()
     if not rex_bin:
@@ -198,7 +198,8 @@ def sync_agy_title_bg(conversation_id: str, cwd: str | None = None, retries: int
 
     if cwd:
         info = inspect_session_for_block(rex_bin, block_id)
-        if info and info.get("session_id") == session_id:
+        session_id = info.get("session_id") if info else None
+        if info and session_id and (not expected_session_id or session_id == expected_session_id):
             _, tiled_count = locate_window_for_block(info, block_id)
             maybe_sync_initial_session_label(rex_bin, info, tiled_count, cwd)
 
@@ -214,7 +215,8 @@ def sync_agy_title_bg(conversation_id: str, cwd: str | None = None, retries: int
             continue
 
         info = inspect_session_for_block(rex_bin, block_id)
-        if not info or info.get("session_id") != session_id:
+        session_id = info.get("session_id") if info else None
+        if not info or not session_id or (expected_session_id and session_id != expected_session_id):
             return
         window, _ = locate_window_for_block(info, block_id)
         if not window or not window.get("window_id"):
@@ -228,15 +230,16 @@ def sync_agy_title_bg(conversation_id: str, cwd: str | None = None, retries: int
 
 
 def sync_shell_cwd(cwd: str) -> None:
-    session_id = os.environ.get("REX_SESSION")
+    expected_session_id = os.environ.get("REX_SESSION") or None
     block_id = os.environ.get("REX_BLOCK")
-    if not is_macos() or not auto_title_enabled() or not session_id or not block_id:
+    if not is_macos() or not auto_title_enabled() or not block_id:
         return
     rex_bin = find_rex_bin()
     if not rex_bin:
         return
     info = inspect_session_for_block(rex_bin, block_id)
-    if not info or info.get("session_id") != session_id:
+    session_id = info.get("session_id") if info else None
+    if not info or not session_id or (expected_session_id and session_id != expected_session_id):
         return
     window, tiled_count = locate_window_for_block(info, block_id)
     if not window or not window.get("window_id"):
@@ -304,7 +307,7 @@ def start_background_sync(event: dict, retries: int) -> None:
 
 def agy_hook(command: str) -> dict:
     response = {"decision": "stop"} if command == "agy-stop" else {}
-    if not is_macos() or not os.environ.get("REX_SESSION") or not os.environ.get("REX_BLOCK"):
+    if not is_macos() or not os.environ.get("REX_BLOCK"):
         return response
 
     event = read_hook_event()
@@ -335,7 +338,7 @@ def print_zsh_hook() -> None:
     script = shlex.quote(str(Path(__file__).resolve()))
     print(f"""autoload -Uz add-zsh-hook
 _rex_handoff_chpwd() {{
-  [[ -n ${{REX_SESSION:-}} && -n ${{REX_BLOCK:-}} ]] || return 0
+  [[ -n ${{REX_BLOCK:-}} ]] || return 0
   python3 {script} shell-cwd "$PWD" </dev/null >/dev/null 2>&1 &!
 }}
 add-zsh-hook chpwd _rex_handoff_chpwd

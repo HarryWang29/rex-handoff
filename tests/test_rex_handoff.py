@@ -22,7 +22,8 @@ import rex_auto_title as titles
 import rex_common as rex
 
 
-REX_ENV = {"REX_SESSION": "session-id", "REX_BLOCK": "source-id"}
+REX_BLOCK_ENV = {"REX_BLOCK": "source-id"}
+REX_ENV = {**REX_BLOCK_ENV, "REX_SESSION": "session-id"}
 SOURCE = {"block_id": "source-id", "creator_name": "com.superlogical.terminal"}
 PEER = {"block_id": "peer-id", "creator_name": "com.superlogical.terminal"}
 IDLE = {"foreground": {"name": "zsh"}, "ancestors": [{"name": "login"}]}
@@ -150,26 +151,98 @@ class RexCliTests(unittest.TestCase):
             call("rex", ["send", "hello"], 2.0),
         ])
 
-    def test_session_inspect_fallback_requires_the_target_pane(self) -> None:
+    def test_session_inspect_uses_current_session_without_rex_session(self) -> None:
         target = rex_session()
-        wrong_session = {"session_id": "unrelated", "windows": []}
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
+            rex, "run_rex_json", return_value=target,
+        ) as run:
+            self.assertEqual(rex.inspect_session_for_block("rex", "source-id"), target)
+        run.assert_called_once_with("rex", ["session", "inspect"])
+
+    def test_session_inspect_falls_back_to_environment_session(self) -> None:
+        target = rex_session()
+        unrelated = {"session_id": "unrelated", "windows": []}
         with patch.dict(os.environ, REX_ENV, clear=True), patch.object(
-            rex, "run_rex_json", side_effect=[
-                subprocess.CalledProcessError(2, "rex"), wrong_session, target,
-            ],
+            rex, "run_rex_json", side_effect=[unrelated, target],
         ) as run:
             self.assertEqual(rex.inspect_session_for_block("rex", "source-id"), target)
         self.assertEqual(run.call_args_list, [
-            call("rex", ["session", "inspect", "-s", "source-id"]),
             call("rex", ["session", "inspect"]),
             call("rex", ["session", "inspect", "session-id"]),
         ])
 
+    def test_session_inspect_uses_whoami_after_unrelated_default_session(self) -> None:
+        target = rex_session()
+        unrelated = {
+            "session_id": "unrelated",
+            "windows": [{"window_id": "other-window", "layers": [{"kind": "tiled", "blocks": [PEER]}]}],
+        }
+        identity = {"session_id": "session-id", "block_id": "source-id"}
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
+            rex, "run_rex_json", side_effect=[unrelated, identity, target],
+        ) as run:
+            self.assertEqual(rex.inspect_session_for_block("rex", "source-id"), target)
+        self.assertEqual(run.call_args_list, [
+            call("rex", ["session", "inspect"]),
+            call("rex", ["--autostart=false", "whoami"], timeout=2.0),
+            call("rex", ["session", "inspect", "session-id"]),
+        ])
+
+    def test_session_inspect_uses_whoami_after_inspect_errors(self) -> None:
+        target = {**rex_session(), "session_id": "live-session"}
+        identity = {"session_id": "live-session", "block_id": "source-id"}
+        with patch.dict(os.environ, REX_ENV, clear=True), patch.object(
+            rex, "run_rex_json", side_effect=[
+                OSError("Rex unavailable"), subprocess.CalledProcessError(1, "rex"), identity, target,
+            ],
+        ) as run:
+            self.assertEqual(rex.inspect_session_for_block("rex", "source-id"), target)
+        self.assertEqual(run.call_args_list, [
+            call("rex", ["session", "inspect"]),
+            call("rex", ["session", "inspect", "session-id"]),
+            call("rex", ["--autostart=false", "whoami"], timeout=2.0),
+            call("rex", ["session", "inspect", "live-session"]),
+        ])
+
+    def test_session_inspect_skips_whoami_session_already_tried(self) -> None:
+        unrelated = {"session_id": "unrelated", "windows": []}
+        missing_pane = {"session_id": "session-id", "windows": []}
+        identity = {"session_id": "session-id", "block_id": "peer-id"}
+        with patch.dict(os.environ, REX_ENV, clear=True), patch.object(
+            rex, "run_rex_json", side_effect=[unrelated, missing_pane, identity],
+        ) as run:
+            self.assertIsNone(rex.inspect_session_for_block("rex", "source-id"))
+        self.assertEqual(run.call_args_list, [
+            call("rex", ["session", "inspect"]),
+            call("rex", ["session", "inspect", "session-id"]),
+            call("rex", ["--autostart=false", "whoami"], timeout=2.0),
+        ])
+
+    def test_session_inspect_returns_none_when_whoami_cannot_resolve_session(self) -> None:
+        unrelated = {"session_id": "unrelated", "windows": []}
+        for identity in ({"block_id": "source-id"}, subprocess.CalledProcessError(1, "rex")):
+            with self.subTest(identity=identity), patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
+                rex, "run_rex_json", side_effect=[unrelated, identity],
+            ) as run:
+                self.assertIsNone(rex.inspect_session_for_block("rex", "source-id"))
+                self.assertEqual(run.call_args_list, [
+                    call("rex", ["session", "inspect"]),
+                    call("rex", ["--autostart=false", "whoami"], timeout=2.0),
+                ])
+
     def test_foreign_session_is_never_returned_when_pane_is_missing(self) -> None:
-        with patch.dict(os.environ, {}, clear=True), patch.object(
-            rex, "run_rex_json", return_value=rex_session(),
-        ):
-            self.assertIsNone(rex.inspect_session_for_block("rex", "missing"))
+        unrelated = rex_session()
+        identity = {"session_id": "session-id", "block_id": "source-id"}
+        for info in (unrelated, OSError("Rex unavailable")):
+            with self.subTest(info=info), patch.dict(os.environ, {"REX_BLOCK": "missing"}, clear=True), patch.object(
+                rex, "run_rex_json", side_effect=[unrelated, identity, info],
+            ) as run:
+                self.assertIsNone(rex.inspect_session_for_block("rex", "missing"))
+                self.assertEqual(run.call_args_list, [
+                    call("rex", ["session", "inspect"]),
+                    call("rex", ["--autostart=false", "whoami"], timeout=2.0),
+                    call("rex", ["session", "inspect", "session-id"]),
+                ])
 
     def test_locate_counts_only_tiled_panes_and_can_find_unfocused_or_floating_pane(self) -> None:
         info = rex_session(PEER)
@@ -287,7 +360,9 @@ class TitleSyncTests(MockedTestCase):
 
     def test_agent_retries_title_and_blocks_subsequent_shell_rename(self) -> None:
         info = rex_session(PEER)
-        with patch.object(titles, "inspect_session_for_block", return_value=info), patch.object(
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
+            rex, "run_rex_json", return_value=info,
+        ), patch.object(
             titles, "read_agy_title", side_effect=["", "", "Implement user auth"],
         ) as read, patch.object(titles.time, "sleep") as sleep:
             titles.sync_agy_title_bg("my-conversation", "/projects/my-app", retries=5)
@@ -301,8 +376,8 @@ class TitleSyncTests(MockedTestCase):
         self.assertEqual((self.state / "block-agy-source-id.txt").read_text(encoding="utf-8"), "Implement user auth")
 
     def test_agent_sync_can_name_initial_session_without_title_or_shell_hook(self) -> None:
-        with patch.object(
-            titles, "inspect_session_for_block", return_value=rex_session(label="bright-river"),
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
+            rex, "run_rex_json", return_value=rex_session(label="bright-river"),
         ), patch.object(titles, "read_agy_title", return_value=""):
             titles.sync_agy_title_bg("my-conversation", "/projects/my-app")
         self.rename.assert_called_once_with("rex", ["session", "rename", "session-id", "--", "my-app"])
@@ -319,7 +394,7 @@ class TitleSyncTests(MockedTestCase):
         self.rename.assert_called_once_with("rex", ["window", "rename", "-s", "session-id", "window-id", "--", "New title"])
 
     def test_shell_tab_uses_default_or_previous_label_and_preserves_custom_label(self) -> None:
-        with patch.object(titles, "inspect_session_for_block") as inspect:
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(rex, "run_rex_json") as inspect:
             inspect.return_value = rex_session(label="My session")
             titles.sync_shell_cwd("/projects/my-app")
             self.labels.return_value = (None, "~")
@@ -331,6 +406,21 @@ class TitleSyncTests(MockedTestCase):
             call("rex", ["window", "rename", "-s", "session-id", "window-id", "--", "my-app"]),
             call("rex", ["window", "rename", "-s", "session-id", "window-id", "--", "~"]),
         ])
+
+    def test_title_sync_skips_unresolved_and_mismatched_sessions(self) -> None:
+        cases = (
+            (REX_BLOCK_ENV, None),
+            (REX_BLOCK_ENV, {**rex_session(), "session_id": ""}),
+            ({**REX_ENV, "REX_SESSION": "old-session"}, rex_session()),
+        )
+        for env, info in cases:
+            with self.subTest(env=env, info=info), patch.dict(os.environ, env, clear=True), patch.object(
+                titles, "inspect_session_for_block", return_value=info,
+            ), patch.object(titles, "read_agy_title", return_value="Implement user auth"):
+                titles.sync_agy_title_bg("my-conversation", "/projects/my-app")
+                titles.sync_shell_cwd("/projects/my-app")
+                self.rename.assert_not_called()
+                self.assertEqual(list(self.state.glob("*.txt")), [])
 
 
 class HookTests(unittest.TestCase):
@@ -353,7 +443,7 @@ class HookTests(unittest.TestCase):
     def test_start_injects_context_even_with_auto_title_disabled(self) -> None:
         for setting in ("0", " FALSE ", "off"):
             with self.subTest(setting=setting), patch.dict(
-                os.environ, {**REX_ENV, "REX_HANDOFF_AUTO_TITLE": setting}, clear=True,
+                os.environ, {**REX_BLOCK_ENV, "REX_HANDOFF_AUTO_TITLE": setting}, clear=True,
             ), patch.object(titles, "is_macos", return_value=True), patch.object(
                 titles, "find_rex_bin", return_value="rex",
             ), patch.object(titles, "run_rex_text", return_value="Context for Rex\n") as context, patch.object(
@@ -371,7 +461,7 @@ class HookTests(unittest.TestCase):
 
     def test_hook_launches_detached_background_process_with_correct_retry_counts(self) -> None:
         event = json.dumps({"conversationId": "my-conversation", "workspacePaths": ["/projects/my-app"]})
-        with patch.dict(os.environ, REX_ENV, clear=True), patch.object(
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
             titles, "is_macos", return_value=True,
         ), patch.object(titles, "find_rex_bin", return_value=None), patch.object(
             titles.subprocess, "Popen",
@@ -394,6 +484,8 @@ class HookTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             self.assertEqual(titles.main(["print-zsh-hook"]), 0)
         hook = out.getvalue()
+        self.assertIn("[[ -n ${REX_BLOCK:-} ]] || return 0", hook)
+        self.assertNotIn("REX_SESSION", hook)
         self.assertIn(f"python3 {shlex.quote(str(SCRIPTS / 'rex_auto_title.py'))} shell-cwd \"$PWD\"", hook)
         self.assertIn("add-zsh-hook chpwd _rex_handoff_chpwd", hook)
         self.assertTrue(hook.endswith("\n_rex_handoff_chpwd\n"))
@@ -595,10 +687,39 @@ class DispatchRexTests(MockedTestCase):
             dispatch.dispatch_handoff(self.cwd, self.prompt, direction="up")
         self.inspect.assert_not_called()
 
-    def test_cli_direction_reaches_rex_split(self) -> None:
-        self.inspect.return_value = rex_session()
+    def test_dispatch_requires_rex_block(self) -> None:
+        with patch.dict(os.environ, {"REX_SESSION": "session-id"}, clear=True), self.assertRaisesRegex(
+            dispatch.DispatchError, "REX_BLOCK is required",
+        ):
+            dispatch.dispatch_handoff(self.cwd, self.prompt)
+        self.inspect.assert_not_called()
+
+    def test_dispatch_rejects_unresolved_and_mismatched_sessions(self) -> None:
+        unresolved = "Rex could not resolve the session containing pane source-id"
+        cases = (
+            (REX_BLOCK_ENV, None, unresolved),
+            (REX_BLOCK_ENV, {**rex_session(PEER), "session_id": ""}, unresolved),
+            (
+                {**REX_ENV, "REX_SESSION": "old-session"},
+                rex_session(PEER),
+                "REX_SESSION mismatch for Rex pane source-id.*expected old-session, found session-id",
+            ),
+        )
+        for env, info, message in cases:
+            with self.subTest(env=env, info=info), patch.dict(os.environ, env, clear=True):
+                self.inspect.return_value = info
+                with self.assertRaisesRegex(dispatch.DispatchError, message):
+                    dispatch.dispatch_handoff(self.cwd, self.prompt)
+                self.process.assert_not_called()
+                self.split.assert_not_called()
+                self.send.assert_not_called()
+
+    def test_cli_direction_reaches_rex_split_without_rex_session(self) -> None:
+        self.inspect.side_effect = rex.inspect_session_for_block
         self.split.return_value = {"block_ids": ["new-pane"]}
-        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()) as out:
+        with patch.dict(os.environ, REX_BLOCK_ENV, clear=True), patch.object(
+            rex, "run_rex_json", return_value=rex_session(),
+        ), tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()) as out:
             cwd = Path(temporary).resolve()
             handoff = cwd / "handoff.md"
             handoff.touch()
@@ -607,7 +728,9 @@ class DispatchRexTests(MockedTestCase):
                 "--direction", "left",
             ])
         self.assertEqual(exit_code, 0)
-        self.assertEqual(json.loads(out.getvalue())["split_direction"], "left")
+        report = json.loads(out.getvalue())
+        self.assertEqual(report["session_id"], "session-id")
+        self.assertEqual(report["split_direction"], "left")
         self.split.assert_called_once_with("rex", [
             "split", "-s", "session-id", "-b", "source-id", "--split=left", "-c", str(cwd),
             "--label", "omp", "--focus=false",
@@ -664,17 +787,33 @@ class DispatchCommandTests(unittest.TestCase):
         self.assertIsNone(report["checks"]["rex_session"])
 
     def test_doctor_checks_that_rex_environment_points_to_a_live_pane(self) -> None:
-        with patch.dict(os.environ, REX_ENV, clear=True), patch.object(
-            dispatch, "is_macos", return_value=True,
-        ), patch.object(dispatch, "find_rex_bin", return_value="rex"), patch.object(
-            dispatch, "has_omp", return_value=True,
-        ), patch.object(dispatch, "rex_agent_naming_enabled", return_value=False), patch.object(
-            dispatch, "selected_agy_model", return_value=None,
-        ), patch.object(dispatch, "run_rex_json", return_value={"session_id": "session-id"}) as whoami:
-            report = dispatch.doctor()
-        self.assertFalse(report["ok"])
-        self.assertFalse(report["checks"]["inside_rex_session"])
-        whoami.assert_called_once_with("rex", ["--autostart=false", "whoami"], timeout=2.0)
+        live = {"session_id": "session-id", "block_id": "source-id"}
+        warning = "Start agy in a live Rex pane with a matching REX_BLOCK value."
+        cases = (
+            (REX_BLOCK_ENV, live, True, "session-id"),
+            ({**REX_BLOCK_ENV, "REX_SESSION": ""}, live, True, "session-id"),
+            (REX_BLOCK_ENV, {"session_id": "session-id"}, False, "session-id"),
+            (REX_BLOCK_ENV, {**live, "block_id": "other-pane"}, False, "session-id"),
+            (REX_BLOCK_ENV, {"block_id": "source-id"}, False, None),
+            (REX_BLOCK_ENV, OSError("Rex unavailable"), False, None),
+            ({**REX_ENV, "REX_SESSION": "old-session"}, live, False, "old-session"),
+        )
+        with patch.object(dispatch, "is_macos", return_value=True), patch.object(
+            dispatch, "find_rex_bin", return_value="rex",
+        ), patch.object(dispatch, "has_omp", return_value=True), patch.object(
+            dispatch, "rex_agent_naming_enabled", return_value=False,
+        ), patch.object(dispatch, "selected_agy_model", return_value=None):
+            for env, identity, inside, session_id in cases:
+                with self.subTest(env=env, identity=identity), patch.dict(os.environ, env, clear=True), patch.object(
+                    dispatch, "run_rex_json", side_effect=[identity],
+                ) as whoami, redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(dispatch.main(["--doctor"]), 0)
+                    report = json.loads(out.getvalue())
+                    self.assertEqual(report["ok"], inside)
+                    self.assertEqual(report["checks"]["inside_rex_session"], inside)
+                    self.assertEqual(report["checks"]["rex_session"], session_id)
+                    self.assertEqual(report["warnings"], [] if inside else [warning])
+                    whoami.assert_called_once_with("rex", ["--autostart=false", "whoami"], timeout=2.0)
 
     def test_dry_run_builds_prompt_without_reading_handoff_or_contacting_rex(self) -> None:
         with patch.object(dispatch, "dispatch_handoff") as live, patch.object(
