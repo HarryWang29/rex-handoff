@@ -15,6 +15,8 @@ flowchart LR
     Agy -->|汇报初审结果| User
 ```
 
+关于为什么拆成规划/实施两段，以及 `omp` 模型分层、subagent 派发与规则调优的实践经验，见 [工作流与调优指南](docs/workflow-guide.md)。
+
 ## 安装
 
 需要 macOS、[Rex](https://www.superlogical.com/rex)、支持插件的 [Antigravity CLI (`agy`)](https://antigravity.google/docs/cli)、提供 `task` 的 `omp`、Python 3.9 及以上，以及 Git。Python 脚本只使用标准库，零外部依赖。
